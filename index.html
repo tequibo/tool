@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Image Upload</title>
+</head>
+<body>
+    <h1>Image Upload</h1>
+    <input type="file" id="imageInput" multiple>
+    <button onclick="uploadImages()">Upload</button>
+    <button onclick="interruptGeneration()">Interrupt</button>
+    <div id="output"></div>
+
+    <script>
+        async function uploadImages() {
+            const input = document.getElementById('imageInput');
+            const files = input.files;
+            const formData = new FormData();
+
+            for (let i = 0; i < files.length; i++) {
+                formData.append('files', files[i]);
+            }
+
+            try {
+                const response = await fetch('http://localhost:8000/generate', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                if (!response.ok) {
+                    throw new Error('Failed to upload images');
+                }
+
+                const data = await response.json();
+                const frames = data.frames;
+
+                const outputDiv = document.getElementById('output');
+                outputDiv.innerHTML = '';
+
+                if (frames && frames.length > 0) {
+                    frames.forEach(frame => {
+                        const img = document.createElement('img');
+                        img.src = `data:image/jpeg;base64,${frame}`;
+                        outputDiv.appendChild(img);
+                    });
+                } else {
+                    outputDiv.textContent = 'No frames generated.';
+                }
+            } catch (error) {
+                console.error('Error:', error.message);
+            }
+        }
+
+        async function interruptGeneration() {
+            try {
+                const response = await fetch('http://localhost:8000/interrupt', {
+                    method: 'POST'
+                });
+
+                if (!response.ok) {
+                    throw new Error('Failed to interrupt generation');
+                }
+
+                const data = await response.json();
+                console.log(data.status);
+                alert('Generation interrupted');
+            } catch (error) {
+                console.error('Error:', error.message);
+            }
+        }
+    </script>
+</body>
+</html>
