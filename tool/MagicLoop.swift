@@ -1,5 +1,5 @@
 import SpriteKit
-
+import AVFoundation
 class MagicLoop: SKNode {
 	private var lastFrameTime:CGFloat = 0
 	public var spriteNode: SKSpriteNode
@@ -56,7 +56,7 @@ class MagicLoop: SKNode {
 	public var params:SKUniform = SKUniform(name: "u_params", vectorFloat4: vector_float4(1, 1, 0, 0))
 	public var texture:SKUniform = SKUniform(name: "u_mask_texture", texture: SKTexture(imageNamed: "mask_texture"))
 	public var freeze = false
-	
+    public var localTime = 0.0
 	var channelSwitches:[vector_float4] = [vector_float4(1, 1, 1, 1),
 										   vector_float4(1, 0, 0, 1),
 										   vector_float4(0, 1, 0, 1),
@@ -66,7 +66,12 @@ class MagicLoop: SKNode {
 	public var primer:Bool = false
 	public var globalSettings:SharedObject
 	
-	init(textures: [SKTexture], position: CGPoint, settings: SharedObject) {
+    // Add properties for audio
+    private var audioURL: URL? // Store the URL of the audio file
+    private var audioPlayer: AVAudioPlayer? // Player instance (consider using AVAudioEngine for more control if needed)
+
+    init(textures: [SKTexture], position: CGPoint, settings: SharedObject, audioURL: URL? = nil) { // Add audioURL parameter
+        self.audioURL = audioURL // Store the audio URL
 		self.globalSettings = settings
 		
 		self.textures = textures
@@ -164,19 +169,70 @@ class MagicLoop: SKNode {
 //		self.spriteNode.warpGeometry = warpGeometryGridNoWarp
 //		let warpAction = SKAction.warp(to: warpGeometryGrid,duration: 0.5)
 //		spriteNode.run(warpAction!)
+        
+        
 		// Define the action with easing
-		let scaleUpAction = SKAction.scale(to: 1, duration: 0.2)
-		scaleUpAction.timingMode = .easeOut // Apply easing
+//		let scaleUpAction = SKAction.scale(to: 1, duration: 0.2)
+//		scaleUpAction.timingMode = .easeOut // Apply easing
 
 		// Run the action
-		spriteNode.scale(to: CGSize(width: 0.0, height: 0.0))
-		spriteNode.run(scaleUpAction)
+//		spriteNode.scale(to: CGSize(width: 0.0, height: 0.0))
+//		spriteNode.run(scaleUpAction)
+        
+        // Start with black color (full tint)
+        spriteNode.color = .black
+        spriteNode.colorBlendFactor = 1.0  // Full colorization
+
+        // Animate back to neutral (original texture color)
+        let colorizeBack = SKAction.colorize(
+            withColorBlendFactor: 0.0,  // 0.0 = no tint, shows original texture
+            duration: 0.2
+        )
+        colorizeBack.timingMode = .easeOut
+        spriteNode.run(colorizeBack)
+//        debugOverlay?.isHidden.toggle()
 	}
 	
 	required init?(coder aDecoder: NSCoder) {
 		fatalError("init(coder:) has not been implemented")
 	}
-	
+    public func playSound() {
+            // print("Attempting to play sound from URL: \(audioURL?.absoluteString ?? "nil")")
+            guard let url = audioURL else {
+                print("No audio URL provided for MagicLoop at \(self.position)")
+                return
+            }
+
+            // Check if file exists
+            guard FileManager.default.fileExists(atPath: url.path) else {
+                 print("Audio file does not exist at path: \(url.path)")
+                 return
+            }
+
+            do {
+                // Create a new player instance each time or reuse if preferred and managed correctly
+                // Reusing requires careful state management (stop/seek)
+                audioPlayer = try AVAudioPlayer(contentsOf: url)
+                audioPlayer?.delegate = self // Optional: if you want delegate callbacks
+                audioPlayer?.prepareToPlay()
+                audioPlayer?.play()
+                 print("Playing sound for MagicLoop")
+            } catch {
+                print("Failed to initialize AVAudioPlayer with URL \(url.path): \(error)")
+            }
+        }
+        
+        // Optional: Method to stop sound
+        public func stopSound() {
+            audioPlayer?.stop()
+            audioPlayer?.currentTime = 0 // Reset to beginning if needed
+        }
+        
+        // Optional: Deinitializer to clean up resources
+        deinit {
+            audioPlayer?.stop()
+            audioPlayer = nil
+        }
 	// Method to create a circular mask
 	public func switchChannel() {
 		channelSwitchIndex += 1
@@ -236,6 +292,9 @@ class MagicLoop: SKNode {
 		return duplicate
 	}
 	
+    func restartPlayback(){
+        localTime = 0
+    }
 	//MARK: UPRATE
 	func update(currentTime: TimeInterval, recording:Bool = false) {
 		if textures.isEmpty {
@@ -268,7 +327,7 @@ class MagicLoop: SKNode {
 //			else{
 //				currentFrame+=frameSkip
 //			}
-			playhead = ((currentTime + timeOffset) / loopDuration).truncatingRemainder(dividingBy: 1.0)
+			playhead = ((localTime + timeOffset) / loopDuration).truncatingRemainder(dividingBy: 1.0)
 		}
 		if isReversed {
 			playhead = 1-playhead//(currentTime / loopDuration ).truncatingRemainder(dividingBy: 1.0)
@@ -287,14 +346,19 @@ class MagicLoop: SKNode {
 		
 		if currentFrame>self.totalFrames-1 {
 			currentFrame=0
+//            playSound()
 		}
 		else if currentFrame < 0 {
+//            playSound()
 			currentFrame=self.totalFrames-1
 		}
 //			print("real frame \(currentFrame)")
-		var filmFrame = Int(framesPlayhead * floor(Double(totalFrames)))
+		var filmFrame = Int(floor(framesPlayhead * floor(Double(totalFrames))))
 //		filmFrame = currentFrame
 		currentFrame = filmFrame
+        if(currentFrame==0){
+//            playSound()
+        }
 		if(textures.count>1){
 			spriteNode.texture = textures[filmFrame]
 		}
@@ -309,6 +373,7 @@ class MagicLoop: SKNode {
 			self.position.y = self.truePosition.y+positionRecord[currentFrame].y
 			self.zRotation = self.trueRotation+rotationRecord[currentFrame]
 		}
+        localTime += delta
 //		}
 		updateDebugOverlay()
 	}
@@ -382,12 +447,12 @@ class MagicLoop: SKNode {
 									 y: -100)
 		debugOverlay?.addChild(timeLabel!)
 		
-		progressBar = SKShapeNode(rectOf: CGSize(width: spriteNode.size.width, height: spriteNode.size.height))
-		progressBar?.fillColor = .black
-		progressBar?.alpha = 0.5
+		progressBar = SKShapeNode(rectOf: CGSize(width: spriteNode.size.width, height: 35))
+		progressBar?.fillColor = .cyan
+		progressBar?.alpha = 1.0
 		progressBar?.lineWidth = 0
 		progressBar?.strokeColor = .red
-		progressBar?.position = CGPoint(x: -spriteNode.size.width / 2, y: 0)
+        progressBar?.position = CGPoint(x: -spriteNode.size.width / 2, y: -spriteNode.size.height/2)
 		debugOverlay?.addChild(progressBar!)
 		
 		outline = SKShapeNode(rectOf: CGSize(width: spriteNode.size.width, height: spriteNode.size.height))
@@ -426,4 +491,16 @@ class MagicLoop: SKNode {
 		debugOverlay?.isHidden.toggle()
 	}
 	
+}
+extension MagicLoop: AVAudioPlayerDelegate {
+     func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
+         // print("Audio finished playing successfully: \(flag)")
+         // Handle completion if necessary
+     }
+     
+     func audioPlayerDecodeErrorDidOccur(_ player: AVAudioPlayer, error: Error?) {
+         if let error = error {
+             print("Audio decode error occurred: \(error)")
+         }
+     }
 }
